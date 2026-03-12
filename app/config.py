@@ -22,5 +22,15 @@ class Settings:
         self.PAGE_SIZE = int(os.getenv("PAGE_SIZE", "10"))
         self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+        self.OLLAMA_BASE_URL = os.getenv(
+            "OLLAMA_BASE_URL",
+            "http://localhost:11434"
+        )
+
+        self.EMBED_MODEL = os.getenv(
+            "EMBED_MODEL",
+            "embeddinggemma"
+        )
+
 
 settings = Settings()

@@ -8,15 +8,18 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    future=True,
-    pool_pre_ping=True,
-)
+# engine = create_engine(
+#     settings.DATABASE_URL,
+#     future=True,
+#     pool_pre_ping=True,
+# )
 
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    autocommit=False,
-    future=True,
-)
+# SessionLocal = sessionmaker(
+#     bind=engine,
+#     autoflush=False,
+#     autocommit=False,
+#     future=True,
+# )
+
+engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
