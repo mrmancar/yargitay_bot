@@ -2,10 +2,13 @@ import os
 import sys
 import time
 import traceback
-import app.crawler_detail as cd
-print("crawler_detail file:", cd.__file__)
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+import app.crawler_detail as cd
+
+print("crawler_detail file:", cd.__file__)
+print("RUNNING crawler_detail:", cd.__file__)
 
 from app.crawler_detail import fetch_and_save_detail_batch
 from app.db import SessionLocal
@@ -14,8 +17,8 @@ from app.db import SessionLocal
 def main():
     batch_size = 20
     sleep_sec = 60
-    target_year = 2026
-    concurrency = 5
+    target_year = 2025
+    concurrency = 20
 
     db = SessionLocal()
 
@@ -39,6 +42,9 @@ def main():
                 processed = result["processed"]
                 success = result["success"]
                 failed = result["failed"]
+                fetch_seconds = result["fetch_seconds"]
+                save_seconds = result["save_seconds"]
+                total_seconds = result["total_seconds"]
 
             except Exception as exc:
                 print("=" * 60)
@@ -60,6 +66,9 @@ def main():
             print(f"Processed   : {processed}")
             print(f"Success     : {success}")
             print(f"Failed      : {failed}")
+            print(f"Fetch sec   : {fetch_seconds}")
+            print(f"Save sec    : {save_seconds}")
+            print(f"Total sec   : {total_seconds}")
             print(f"Total proc  : {total_processed}")
             print(f"Total succ  : {total_success}")
             print(f"Total fail  : {total_failed}")
