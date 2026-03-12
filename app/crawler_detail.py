@@ -1,19 +1,13 @@
+import asyncio
+import time
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.client import YargitayClient
+from app.client import AsyncYargitayClient
 from app.models import Case, CaseDetail
 
-
-def get_next_case_without_detail(db: Session) -> Case | None:
-    stmt = (
-        select(Case)
-        .where(Case.detail_fetched.is_(False))
-        .order_by(Case.id.asc())
-        .limit(1)
-    )
-    return db.execute(stmt).scalar_one_or_none()
-
+print("LOADED NEW crawler_detail.py")
 
 def get_cases_without_detail(
     db: Session,
@@ -28,15 +22,6 @@ def get_cases_without_detail(
     stmt = stmt.order_by(Case.id.desc()).limit(limit)
 
     return list(db.execute(stmt).scalars().all())
-
-
-def fetch_case_detail(case_id: int) -> dict:
-    client = YargitayClient()
-    try:
-        client.init_session()
-        return client.get_document(case_id)
-    finally:
-        client.close()
 
 
 def save_case_detail(db: Session, case_id: int, response_json: dict) -> None:
@@ -62,10 +47,57 @@ def save_case_detail(db: Session, case_id: int, response_json: dict) -> None:
     db.commit()
 
 
+async def _fetch_one_case(
+    client: AsyncYargitayClient,
+    case: Case,
+    semaphore: asyncio.Semaphore,
+) -> tuple[Case, dict | None, Exception | None]:
+    async with semaphore:
+        started = time.perf_counter()
+        print(f"START case_id={case.id}")
+
+        try:
+            response_json = await client.get_document(case.id)
+            elapsed = time.perf_counter() - started
+            print(f"END   case_id={case.id} elapsed={elapsed:.2f}s")
+            return case, response_json, None
+        except Exception as exc:
+            elapsed = time.perf_counter() - started
+            print(f"FAIL  case_id={case.id} elapsed={elapsed:.2f}s error={exc}")
+            return case, None, exc
+
+
+async def _fetch_case_details_async(
+    cases: list[Case],
+    concurrency: int = 5,
+) -> list[tuple[Case, dict | None, Exception | None]]:
+    semaphore = asyncio.Semaphore(concurrency)
+    client = AsyncYargitayClient()
+    results: list[tuple[Case, dict | None, Exception | None]] = []
+
+    try:
+        await client.init_session()
+
+        tasks = [
+            asyncio.create_task(_fetch_one_case(client, case, semaphore))
+            for case in cases
+        ]
+
+        for completed_task in asyncio.as_completed(tasks):
+            result = await completed_task
+            results.append(result)
+
+        return results
+
+    finally:
+        await client.close()
+
+
 def fetch_and_save_detail_batch(
     db: Session,
     limit: int = 20,
     target_year: int | None = None,
+    concurrency: int = 5,
 ) -> dict:
     cases = get_cases_without_detail(
         db=db,
@@ -80,64 +112,46 @@ def fetch_and_save_detail_batch(
             "failed": 0,
         }
 
-    processed = 0
-    success = 0
-    failed = 0
-
-    client = YargitayClient()
-
-    try:
-        client.init_session()
-
-        for case in cases:
-            processed += 1
-            try:
-                response_json = client.get_document(case.id)
-                save_case_detail(db, case.id, response_json)
-
-                html_text = response_json.get("data", "") or ""
-                print(
-                    f"OK case_id={case.id} "
-                    f"karar_tarihi_raw={case.karar_tarihi_raw} "
-                    f"html_length={len(html_text)}"
-                )
-                success += 1
-
-            except Exception as exc:
-                db.rollback()
-                print(
-                    f"FAIL case_id={case.id} "
-                    f"karar_tarihi_raw={case.karar_tarihi_raw} "
-                    f"error={exc}"
-                )
-                failed += 1
-    finally:
-        client.close()
-
-    return {
-        "processed": processed,
-        "success": success,
-        "failed": failed,
-    }
-    cases = get_cases_without_detail(db, limit=limit)
+    results = asyncio.run(
+        _fetch_case_details_async(
+            cases=cases,
+            concurrency=concurrency,
+        )
+    )
 
     processed = 0
     success = 0
     failed = 0
 
-    for case in cases:
+    for case, response_json, error in results:
         processed += 1
+
+        if error is not None:
+            db.rollback()
+            print(
+                f"FAIL SAVE case_id={case.id} "
+                f"karar_tarihi_raw={case.karar_tarihi_raw} "
+                f"error={error}"
+            )
+            failed += 1
+            continue
+
         try:
-            response_json = fetch_case_detail(case.id)
             save_case_detail(db, case.id, response_json)
-
-            html_text = response_json.get("data", "")
-            print(f"OK   case_id={case.id} html_length={len(html_text)}")
+            html_text = response_json.get("data", "") or ""
+            print(
+                f"OK SAVE case_id={case.id} "
+                f"karar_tarihi_raw={case.karar_tarihi_raw} "
+                f"html_length={len(html_text)}"
+            )
             success += 1
-
         except Exception as exc:
             db.rollback()
-            print(f"FAIL case_id={case.id} error={exc}")
+            print(
+                f"FAIL DB case_id={case.id} "
+                f"karar_tarihi_raw={case.karar_tarihi_raw} "
+                f"db_error={exc}"
+            )
             failed += 1
 
     return {
